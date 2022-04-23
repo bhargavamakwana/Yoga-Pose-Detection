@@ -49,15 +49,16 @@ my_transform = transforms.Compose([
 
 
 train_data = torchvision.datasets.ImageFolder(root=TRAIN_DATA_PATH, transform=my_transform)
-train_data_loader = data.DataLoader(train_data, batch_size=16, shuffle=True,  num_workers=2)
+train_data_loader = data.DataLoader(train_data, batch_size=16, shuffle=True,  num_workers=2, drop_last=True)
 test_data = torchvision.datasets.ImageFolder(root=TEST_DATA_PATH, transform=my_transform)
-test_data_loader  = data.DataLoader(test_data, batch_size=16, shuffle=True, num_workers=2)
+test_data_loader  = data.DataLoader(test_data, batch_size=16, shuffle=True, num_workers=2, drop_last=True)
 
 class NeuralNet(nn.Module):
   
     def __init__(self):
         super(NeuralNet, self).__init__()
 
+        self.output_num = [2]
         # spatial size: (224,224)    # number of channels = 3
         self.conv1 = nn.Conv2d(3, 64, kernel_size=(3,3), padding = 'same')
         self.pool1 = nn.MaxPool2d(2)
@@ -71,7 +72,8 @@ class NeuralNet(nn.Module):
         self.pool3 = nn.MaxPool2d(2)
         self.drop3 = nn.Dropout(0.25)
 
-        self.linear4 = nn.Linear(256*28*28,1024)
+        #self.linear4 = nn.Linear(256*28*28,1024)
+        self.linear4 = nn.Linear(50176,1024)
         self.drop4 = nn.Dropout(0.5)
 
         self.linear5 = nn.Linear(1024,5)
@@ -79,7 +81,7 @@ class NeuralNet(nn.Module):
         self.relu = nn.ReLU()
         self.softmax = nn.Softmax()
         
-    def forward(self, x):
+    def forward(self, x, batch_size):
         x = self.relu(self.conv1(x))
         x = self.pool1(x)
         x = self.drop1(x)
@@ -91,11 +93,10 @@ class NeuralNet(nn.Module):
         x = self.relu(self.conv3(x))
         x = self.pool3(x)
         x = self.drop3(x)
-        
-        x = x.view(-1, self.num_flat_features(x))
+        x = self.spatial_pyramid_pool(x,batch_size,[int(x.size(2)),int(x.size(3))],self.output_num)
+        #x = x.view(-1, self.num_flat_features(x))
         x = self.relu(self.linear4(x))
         x = self.drop4(x)
-        
         x = x.view(-1, self.num_flat_features(x))
         x = self.linear5(x)
         
@@ -108,6 +109,30 @@ class NeuralNet(nn.Module):
             num_features *= s
         return num_features
         
+    def spatial_pyramid_pool(self,previous_conv, num_sample, previous_conv_size, out_pool_size):
+        '''
+        previous_conv: a tensor vector of previous convolution layer
+        num_sample: an int number of image in the batch
+        previous_conv_size: an int vector [height, width] of the matrix features size of previous convolution layer
+        out_pool_size: a int vector of expected output size of max pooling layer
+        
+        returns: a tensor vector with shape [1 x n] is the concentration of multi-level pooling
+        '''    
+        print(previous_conv.shape, num_sample, previous_conv_size, out_pool_size)
+        import math
+        for i in range(len(out_pool_size)):
+            # print(previous_conv_size)
+            h_wid = int(math.ceil(previous_conv_size[0] / out_pool_size[i]))
+            w_wid = int(math.ceil(previous_conv_size[1] / out_pool_size[i]))
+            h_pad = (h_wid*out_pool_size[i] - previous_conv_size[0] + 1)/2
+            w_pad = (w_wid*out_pool_size[i] - previous_conv_size[1] + 1)/2
+            maxpool = nn.MaxPool2d(2)
+            x = maxpool(previous_conv)
+            if(i == 0):
+                spp = x.view(num_sample,-1)
+            else:
+                spp = torch.cat((spp,x.view(num_sample,-1)), 1)
+        return spp
         
 net = NeuralNet()
 
@@ -167,7 +192,7 @@ def train(epoch):
     for batch_idx, (inputs, targets) in enumerate(train_data_loader):
         inputs, targets = inputs.to(device), targets.to(device)
         optimizer.zero_grad()
-        outputs = net(inputs)
+        outputs = net(inputs, batch_size)
         loss = criterion(outputs, targets)
         loss.backward()
         optimizer.step()
@@ -197,7 +222,7 @@ def test(epoch):
     with torch.no_grad():
         for batch_idx, (inputs, targets) in enumerate(test_data_loader):
             inputs, targets = inputs.to(device), targets.to(device)
-            outputs = net(inputs)
+            outputs = net(inputs, batch_size)
             loss = criterion(outputs, targets)
 
             test_loss += loss.item()
