@@ -9,9 +9,7 @@ Original file is located at
 
 # Commented out IPython magic to ensure Python compatibility.
 import numpy as np # linear algebra
-import pandas as pd # data processing, CSV file I/O (e.g. pd.read_csv)
 import os
-import matplotlib.pyplot as plt
 
 import torch
 import torch.nn as nn
@@ -26,39 +24,25 @@ import os
 import argparse
 import matplotlib.pyplot as plt
 
+
+from torch.utils.data import Dataset, DataLoader
+import os
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 from torch.autograd import Variable
 import torch.utils.data as data
+import torchvision
 from torchvision import transforms
-from torch.utils.data import Dataset, DataLoader
-import matplotlib.pyplot as plt
 
-
-# %matplotlib inline
-# %config InlineBackend.figure_format = 'retina'
-
-TRAIN_DATA_PATH = '/scratch/bm3125/pytorch-example/Yoga-Pose-Detection/DATASET/TRAIN' #directory with training images
-TEST_DATA_PATH = '/scratch/bm3125/pytorch-example/Yoga-Pose-Detection/DATASET/TEST' #directory with testing images
-
-my_transform = transforms.Compose([
-    transforms.Resize((224,224)),
-    #transforms.RandomCrop(32, padding=4),
-    transforms.RandomHorizontalFlip(),
-    transforms.ToTensor(),
-    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
-])
-
-
-train_data = torchvision.datasets.ImageFolder(root=TRAIN_DATA_PATH, transform=my_transform)
-train_data_loader = data.DataLoader(train_data, batch_size=16, shuffle=True,  num_workers=2, drop_last=True)
-test_data = torchvision.datasets.ImageFolder(root=TEST_DATA_PATH, transform=my_transform)
-test_data_loader  = data.DataLoader(test_data, batch_size=16, shuffle=True, num_workers=2, drop_last=True)
 
 class NeuralNet(nn.Module):
-  
+
     def __init__(self):
         super(NeuralNet, self).__init__()
 
-        self.output_num = [2]
+        self.output_num = [2, 2, 2, 2, 2, 1]
         # spatial size: (224,224)    # number of channels = 3
         self.conv1 = nn.Conv2d(3, 64, kernel_size=(3,3), padding = 'same')
         self.pool1 = nn.MaxPool2d(2)
@@ -67,25 +51,27 @@ class NeuralNet(nn.Module):
         self.conv2 = nn.Conv2d(64, 128, kernel_size=(3,3), padding = 'same')
         self.pool2 = nn.MaxPool2d(2)
         self.drop2 = nn.Dropout(0.25)
-
+#
         self.conv3 = nn.Conv2d(128,256, kernel_size=(3,3), padding = 'same')
         self.pool3 = nn.MaxPool2d(2)
         self.drop3 = nn.Dropout(0.25)
 
+        # spatial size: (5,5)    # number of channels = 32*64 (applys 64 different filters on each channel?)
+        # therefore number of nodes for the hidden layer 32*64*5*5
         #self.linear4 = nn.Linear(256*28*28,1024)
-        self.linear4 = nn.Linear(50176,1024)
+        self.linear4 = nn.Linear(301056, 1024)
         self.drop4 = nn.Dropout(0.5)
-
+#
         self.linear5 = nn.Linear(1024,5)
-
+#
         self.relu = nn.ReLU()
         self.softmax = nn.Softmax()
-        
+
     def forward(self, x, batch_size):
         x = self.relu(self.conv1(x))
         x = self.pool1(x)
         x = self.drop1(x)
-        
+
         x = self.relu(self.conv2(x))
         x = self.pool2(x)
         x = self.drop2(x)
@@ -97,28 +83,30 @@ class NeuralNet(nn.Module):
         #x = x.view(-1, self.num_flat_features(x))
         x = self.relu(self.linear4(x))
         x = self.drop4(x)
+
         x = x.view(-1, self.num_flat_features(x))
         x = self.linear5(x)
-        
+
         return x
-      
+
     def num_flat_features(self, x):
         size = x.size()[1:]  # all dimensions except the batch dimension
         num_features = 1
         for s in size:
             num_features *= s
         return num_features
-        
+
+
     def spatial_pyramid_pool(self,previous_conv, num_sample, previous_conv_size, out_pool_size):
         '''
         previous_conv: a tensor vector of previous convolution layer
         num_sample: an int number of image in the batch
         previous_conv_size: an int vector [height, width] of the matrix features size of previous convolution layer
         out_pool_size: a int vector of expected output size of max pooling layer
-        
+
         returns: a tensor vector with shape [1 x n] is the concentration of multi-level pooling
-        '''    
-        print(previous_conv.shape, num_sample, previous_conv_size, out_pool_size)
+        '''
+        #print(previous_conv.shape, num_sample, previous_conv_size, out_pool_size)
         import math
         for i in range(len(out_pool_size)):
             # print(previous_conv_size)
@@ -133,40 +121,11 @@ class NeuralNet(nn.Module):
             else:
                 spp = torch.cat((spp,x.view(num_sample,-1)), 1)
         return spp
-        
-net = NeuralNet()
 
-from torchsummary import summary
-#summary(net, input_size=(3, 224, 224))
-
-#####################################################################################
-    # Select and Configure the device
-#####################################################################################
-    
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-net = net.to(device)
-if device == 'cuda':
-    net = torch.nn.DataParallel(net)
-    cudnn.benchmark = True
-
-optimizer = optim.SGD(net.parameters(), lr=0.0001, momentum=0.9, weight_decay=5e-4)
-criterion = nn.CrossEntropyLoss()
-scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
-
-epochs = 1  
-batch_size = 16
-
-def count_parameters(model):
-    return sum(p.numel() for p in net.parameters() if p.requires_grad)
-    # torch.numel() returns number of elements in a tensor
-print(count_parameters(net))
-
-from PIL import ImageFile
-ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 #####################################################################################
     # Initialize the variables
-#####################################################################################  
+#####################################################################################
 
 best_acc = 0  # best test accuracy
 start_epoch = 0  # start from epoch 0 or last checkpoint epoch
@@ -176,20 +135,19 @@ test_acc_list = [] # to save the test accuracy for each epoch to plot
 train_loss_list = [] # to save the train loss for each epoch
 train_acc_list = [] # to save the train accuracy for each epoch to plot
 
-#history = model.fit(train_generator, epochs = epochs,validation_data = validation_generator)
 
 #####################################################################################
     #Perform the Training and testing of the model
 #####################################################################################
 # Training
-def train(epoch):
+def train(net, trainloader, device, optimizer, criterion, epoch, batch_size):
     global train_loss_list
     print('\nEpoch: %d' % epoch)
     net.train()
     train_loss = 0
     correct = 0
     total = 0
-    for batch_idx, (inputs, targets) in enumerate(train_data_loader):
+    for batch_idx, (inputs, targets) in enumerate(trainloader):
         inputs, targets = inputs.to(device), targets.to(device)
         optimizer.zero_grad()
         outputs = net(inputs, batch_size)
@@ -211,16 +169,16 @@ def train(epoch):
 
 
 #####################################################################################
-    
+
 # Tesing
-def test(epoch):
+def test(net, testloader, device, optimizer, criterion, epoch, batch_size):
     global best_acc
     net.eval()
     test_loss = 0
     correct = 0
     total = 0
     with torch.no_grad():
-        for batch_idx, (inputs, targets) in enumerate(test_data_loader):
+        for batch_idx, (inputs, targets) in enumerate(testloader):
             inputs, targets = inputs.to(device), targets.to(device)
             outputs = net(inputs, batch_size)
             loss = criterion(outputs, targets)
@@ -233,55 +191,92 @@ def test(epoch):
 
     # Save checkpoint.
     test_acc = 100.*correct/total
-    test_loss_perEpoch = test_loss/(batch_idx+1)    
+    test_loss_perEpoch = test_loss/(batch_idx+1)
     test_acc_list.append(test_acc)
     test_loss_list.append(test_loss_perEpoch)
     if test_acc > best_acc:
         print('Saving..')
         print('Test Loss: %.3f | Acc: %.3f%% (%d/%d)'% (test_loss_perEpoch, test_acc, correct, total))
         print('#####################################################################################')
-        
+
         #Save the state of the model, best accuracy yet and the current epoch
-        state = {
-            'net': net.state_dict(),
-            'acc': test_acc,
-            'epoch': epoch,
-        }
-        if not os.path.isdir('checkpoint'):
-            os.mkdir('checkpoint')
-        torch.save(state, './checkpoint/ckpt.pt')
+        #if not os.path.isdir('checkpoint'):
+        #    os.mkdir('checkpoint')
+        torch.save(net.module.state_dict(), './project1_model.pt')
         best_acc = test_acc
 
-#####################################################################################
-        # Call the Training and Testing functions 
-        # based on the remaining number of epochs
-#####################################################################################
+def main():
+    epochs = 250
+    batch_size = 16
+    TRAIN_DATA_PATH = 'Yoga-Pose-Detection/DATASET/TRAIN/' #directory with training images
+    TEST_DATA_PATH = 'Yoga-Pose-Detection/DATASET/TEST/' #directory with testing images
 
-for epoch in range(start_epoch, start_epoch+100):
-    train(epoch)
-    test(epoch)
-    scheduler.step()
+    train_transforms = transforms.Compose([
+        transforms.Resize((224,224)),
+        transforms.RandomCrop(224, padding=4),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+    ])
 
-#####################################################################################
+    test_transforms = transforms.Compose([
+        transforms.Resize((224,224)),
+        transforms.ToTensor(),
+        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+    ])
+    train_data = torchvision.datasets.ImageFolder(root=TRAIN_DATA_PATH, transform=train_transforms)
+    train_data_loader = data.DataLoader(train_data, batch_size=batch_size, shuffle=True,  num_workers=2, drop_last=True)
+    test_data = torchvision.datasets.ImageFolder(root=TEST_DATA_PATH, transform=test_transforms)
+    test_data_loader  = data.DataLoader(test_data, batch_size=batch_size, shuffle=True, num_workers=2, drop_last=True)
 
-print('Best Accuracy of the model %.3f%%'% (best_acc))
+    net = NeuralNet()
 
-plt.plot(train_loss_list)
-plt.plot(test_loss_list)
-plt.legend(["train", "val"])
-plt.title("Loss")
-plt.savefig("Last_Loss_4_4.jpg")
-
-'''
-train_loss, train_acc = model.evaluate(train_generator)
-test_loss, test_acc   = model.evaluate(validation_generator)
-print("final train accuracy = {:.2f} , validation accuracy = {:.2f}".format(train_acc*100, test_acc*100))
-'''
-
-'''
-model.save('YogaNet_model_1_1.h5')
-'''
+    #from torchsummary import summary
+    #summary(net, input_size=(3, 224, 224))
 
 
-"""The above prediction was correct."""
+    #####################################################################################
+        # Select and Configure the device
+    #####################################################################################
 
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    net = net.to(device)
+    if device == 'cuda':
+        net = torch.nn.DataParallel(net)
+        cudnn.benchmark = True
+
+    optimizer = optim.SGD(net.parameters(), lr=0.0001, momentum=0.9, weight_decay=5e-4)
+    criterion = nn.CrossEntropyLoss()
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=200)
+
+
+    def count_parameters(model):
+        return sum(p.numel() for p in net.parameters() if p.requires_grad)
+        # torch.numel() returns number of elements in a tensor
+    print(count_parameters(net))
+
+    from PIL import ImageFile
+    ImageFile.LOAD_TRUNCATED_IMAGES = True
+
+    #####################################################################################
+            # Call the Training and Testing functions
+            # based on the remaining number of epochs
+    #####################################################################################
+
+    for epoch in range(start_epoch, start_epoch+epochs):
+        train(net, train_data_loader, device, optimizer, criterion, epoch, batch_size)
+        test(net, test_data_loader, device, optimizer, criterion, epoch, batch_size)
+        scheduler.step()
+
+    #####################################################################################
+
+    print('Best Accuracy of the model %.3f%%'% (best_acc))
+
+    plt.plot(train_loss_list)
+    plt.plot(test_loss_list)
+    plt.legend(["train", "val"])
+    plt.title("Loss")
+    plt.savefig("Last_Loss_4_4.jpg")
+
+if __name__ == '__main__':
+    main()
